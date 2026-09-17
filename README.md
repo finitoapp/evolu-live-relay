@@ -1,5 +1,7 @@
 # evolu-live-relay
 
+[![Code Quality](https://github.com/finitoapp/evolu-live-relay/actions/workflows/code-quality.yml/badge.svg)](https://github.com/finitoapp/evolu-live-relay/actions/workflows/code-quality.yml)
+
 A relay for [Evolu](https://www.evolu.dev) that **stores nothing**. It pairs the
 devices of one owner while they are online together and pipes their sync rounds
 at each other, so they reconcile end to end. No database, no message log, no
@@ -13,21 +15,59 @@ A stock Evolu client talks to it unchanged.
 
 ## How it works
 
-Request, Response and Broadcast carry the same `[messages][ranges]` body and
-differ only in a few header bytes, so a round from one device can be re-headered
-and handed to another, which answers it as if it were the relay. Both sides run
-Evolu's own reconciliation; the relay only decides who talks to whom and passes
-bytes. It reads two counts out of each round to know whether it carries data and
-whether the sender wants another round, then forgets them.
+**The two devices reconcile with each other; the relay only decides who talks
+to whom.** It runs none of the sync itself — no fingerprints, no diffing, no
+idea what any of it means.
+
+It can do that because Request, Response and Broadcast carry the same
+`[messages][ranges]` body and differ only in a few header bytes. A round from
+one device is re-headered and handed to another, which answers it as if it had
+come from the relay. The only thing read out of a round is two counts — does it
+carry data, does the sender want another round — and those are forgotten as
+soon as it is routed.
+
+```mermaid
+sequenceDiagram
+    participant A as Device A
+    participant R as Relay
+    participant B as Device B
+
+    Note over A,R: A is alone
+    A->>R: Request
+    R-->>A: Response — no body: "you are in sync"
+
+    Note over A,B: B comes online and syncs
+    B->>R: Request · [messages][ranges]
+    R->>A: Response · same body, new header, write key stripped
+    A->>R: Request · what B is missing
+    R->>B: Response · same body again
+    B->>R: Request · no ranges — the last word
+    R-->>A: Broadcast · same body
+    Note over R: pipe over, nothing kept
+```
 
 [DESIGN.md](./DESIGN.md) has the whole thing: the protocol facts it rests on,
 the routing rules, and — importantly — what it deliberately does not do.
+
+## What happens when
+
+| Situation | What the relay does |
+| :-- | :-- |
+| One device online | Answers "you are in sync" and drops the round. Nothing is stored, so there is nothing to hand it later. |
+| Two devices online | Pairs them and pipes rounds back and forth until one sends a round with no ranges. Both end up holding the union. |
+| Three or more | One pair talks; every other device gets a Broadcast copy of everything that crosses, so all of them converge. |
+| A device joins mid-conversation | Its first round waits until the running pipe goes quiet, then goes through. That wait is what makes "everyone holds the union" true when several devices connect at once. |
+| A partner goes quiet mid-round | After 800 ms the round is offered to the next device, newest first, one at a time. Nobody is asked twice. |
+| Nobody answers | The sender is told "you are in sync" — the same answer a lone device gets, because it is the same situation. Its data already went out as a Broadcast, and the next device to join repairs it. |
+| A device was offline while another wrote | **Nothing.** There is no catch-up. They reconcile the next time both are online. |
+| A device's network dropped | Its socket lingers but is never picked as a partner — pairing prefers the newest free one. Locally, pings reap it in ~30 s. |
+| The relay restarts, or the Durable Object hibernates | A round waiting for a partner can be lost. Devices re-reconcile on their next sync; nothing was on disk to lose. |
 
 ## Run it locally
 
 ```sh
 bun install
-bun run src/server.ts --port 4000
+bun run start --port 4000
 ```
 
 Browsers only allow `wss://` from an https page, so you need a certificate for
@@ -36,7 +76,7 @@ anything but a quick test:
 ```sh
 mkcert -install
 mkcert -key-file key.pem -cert-file cert.pem localhost 127.0.0.1 ::1
-bun run src/server.ts --port 4000 --cert cert.pem --key key.pem
+bun run start --port 4000 --cert cert.pem --key key.pem
 ```
 
 `--cert` on its own also takes a single PEM holding both key and certificate.
@@ -104,9 +144,11 @@ routes = [{ pattern = "relay.example.com", custom_domain = true }]
 
 - **No catch-up.** Both devices must be online together. This is the design, not
   a bug.
-- **Anyone who knows an owner id can connect**; the first write key seen for an
-  owner wins while it has connections. Payloads stay end-to-end encrypted, and a
-  client quarantines what it cannot decrypt, but there is no real auth.
+- **The room id is an unguessable address, not authentication.** The relay
+  verifies nothing, and cannot: SLIP-21 has no public half, so there is nothing
+  to check a device against. Reaching a room takes the owner's secret, and
+  inside one the first write key seen wins while it has connections. Payloads
+  stay end-to-end encrypted and a client quarantines what it cannot decrypt.
 - **No rate limiting, no backpressure, no quotas.**
 - It rests on Evolu internals — clients processing unsolicited messages, and a
   copied reader for the wire format. Both fail safe, and both can drift on an
