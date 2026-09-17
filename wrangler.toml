@@ -2,7 +2,7 @@ name = "evolu-live-relay"
 main = "src/worker.ts"
 compatibility_date = "2026-09-16"
 
-# One object per owner, addressed by the /<ownerId> path.
+# One object per room, addressed by the /<roomId> path; a room is one owner.
 [[durable_objects.bindings]]
 name = "RELAY"
 class_name = "EvoluLiveRelay"

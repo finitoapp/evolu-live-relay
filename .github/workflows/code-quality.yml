@@ -1,10 +1,11 @@
 name: Code Quality
 
 on:
-  push:
-    branches: [main]
   pull_request:
   workflow_dispatch:
+  # Called by deploy.yml, so main is checked by the run that deploys it rather
+  # than by a second one racing alongside.
+  workflow_call:
 
 concurrency:
   group: code-quality-${{ github.event.pull_request.number || github.ref }}

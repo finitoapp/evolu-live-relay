@@ -140,6 +140,26 @@ clock. Add a custom domain by putting it in `wrangler.toml`:
 routes = [{ pattern = "relay.example.com", custom_domain = true }]
 ```
 
+The first deploy creates the Worker and applies the `v1` migration that
+registers the Durable Object class. There is no manual step for it.
+
+### Deploying from CI
+
+`.github/workflows/deploy.yml` deploys every push to `main`, after the checks
+pass — it calls `code-quality.yml` as a reusable workflow and only runs
+`wrangler deploy` if that job succeeds. Two repository secrets are needed
+(**Settings → Secrets and variables → Actions**):
+
+| Secret | Where to get it |
+| :-- | :-- |
+| `CLOUDFLARE_API_TOKEN` | Cloudflare → My Profile → API Tokens → Create Token → **Edit Cloudflare Workers** template, scoped to your account. The minimum is Account → Workers Scripts → Edit; a custom domain route also needs Zone → Workers Routes → Edit. |
+| `CLOUDFLARE_ACCOUNT_ID` | Workers & Pages in the dashboard, or `bunx wrangler whoami`. |
+
+Set them **before** the first push to `main`, or that run fails at the deploy
+step. The job declares `environment: production`, so GitHub creates that
+environment on the first run; add required reviewers there if a deploy should
+wait for a human, or move the two secrets into it to scope them to this job.
+
 ## Limits worth knowing before you use it
 
 - **No catch-up.** Both devices must be online together. This is the design, not
