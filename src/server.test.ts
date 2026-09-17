@@ -145,9 +145,7 @@ let port = 0
 const clients: Array<Client> = []
 
 const connect = async (owner: AppOwner): Promise<Client> => {
-  const socket = new WebSocket(
-    `ws://localhost:${port}/${roomIdFor(owner)}?ownerId=${owner.id}`
-  )
+  const socket = new WebSocket(`ws://localhost:${port}/${roomIdFor(owner)}`)
   socket.binaryType = "arraybuffer"
   const received: Array<Uint8Array> = []
   let notify: (() => void) | null = null
@@ -372,24 +370,31 @@ test("a silent partner is retried, then the sender is told it is in sync", async
   sender.socket.close()
 }, 20_000)
 
-test("an address without a room and an owner is refused", async () => {
+test("an address without a room is refused", async () => {
   const response = await fetch(`http://localhost:${port}/`)
 
   expect(response.status).toBe(400)
-  expect(await response.text()).toContain("/<roomId>?ownerId=<ownerId>")
+  expect(await response.text()).toContain("/<roomId>")
 })
 
-test("a second owner is turned away from a room", async () => {
+test("a second owner's rounds are dropped once a room has settled", async () => {
   const owner = createOwner()
   const stranger = createOwner()
 
-  // The room exists once one of its devices is connected.
+  // The first round settles whose room it is.
   const device = await connect(owner)
+  send(device, createRequest(owner))
+  await device.next()
 
-  const response = await fetch(
-    `http://localhost:${port}/${roomIdFor(owner)}?ownerId=${stranger.id}`
-  )
-  expect(response.status).toBe(409)
+  // Same room, another owner: nothing comes back, and it never becomes a peer,
+  // so the device that belongs here is still answered as if it were alone.
+  const impostor = await connect(owner)
+  send(impostor, createRequest(stranger))
+
+  send(device, createRequest(owner, { tag: 2 }))
+  const answer = await nextInSync(device)
+  expect(answer[errorCodeIndex]).toBe(ProtocolErrorCode.NoError)
 
   device.socket.close()
+  impostor.socket.close()
 })

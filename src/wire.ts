@@ -4,6 +4,8 @@ import {
   MessageType,
   nodeIdBytesLength,
   type OwnerId,
+  OwnerIdBytes,
+  ownerIdBytesToOwnerId,
   ownerWriteKeyLength,
   ProtocolErrorCode,
   SubscriptionFlags,
@@ -38,6 +40,19 @@ export const requestBodyOffset = (message: Uint8Array): number =>
   1 +
   (message[requestFlagsOffset] === 1 ? ownerWriteKeyLength : 0) +
   1
+
+/**
+ * The owner a round is for, read straight out of its header.
+ *
+ * Every message carries it in the same 16 bytes, so the relay never needs it
+ * from anywhere else — not from the address, not from state it keeps. Safe on
+ * anything `parseProtocolHeader` has accepted, which is the only thing that
+ * reaches here.
+ */
+export const readOwnerId = (message: Uint8Array): OwnerId =>
+  ownerIdBytesToOwnerId(
+    OwnerIdBytes.orThrow(message.subarray(versionLength, messageTypeOffset))
+  )
 
 const toHex = (bytes: Uint8Array) =>
   Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")

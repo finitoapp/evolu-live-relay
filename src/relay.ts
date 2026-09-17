@@ -1,4 +1,4 @@
-import type { Console } from "@evolu/common"
+import type { Console, Id } from "@evolu/common"
 import {
   MessageType,
   type OwnerId,
@@ -18,6 +18,7 @@ import {
 import {
   inspect,
   isUnsubscribe,
+  readOwnerId,
   readWriteKey,
   requestBodyOffset,
   responseWithoutBody,
@@ -38,8 +39,11 @@ import {
  * Below it are the two halves it is made of, neither of which holds state:
  * wire.ts, what a round looks like on the wire, and routing.ts, who gets one.
  *
- * One instance per owner, in both hosts: in the Durable Object that is the
- * object itself, locally it is an entry in a map. Nothing here is persisted —
+ * One instance per room, in both hosts: in the Durable Object that is the
+ * object itself, locally it is an entry in a map. A room is one owner, but the
+ * relay is not told which — it learns that from the first round it is given,
+ * the same way it learns the write key, because the address says nothing about
+ * it and every message carries it anyway. Nothing here is persisted —
  * the rounds waiting for a partner live in memory on purpose, because writing
  * them down would make this a database (DESIGN.md §6).
  */
@@ -104,7 +108,7 @@ export interface Relay {
   readonly isIdle: () => boolean
 }
 
-export const createRelay = (ownerId: OwnerId, host: RelayHost): Relay => {
+export const createRelay = (roomId: Id, host: RelayHost): Relay => {
   /**
    * Rounds waiting for a partner, or for a partner's answer. In memory on
    * purpose; a Durable Object may lose them to hibernation, and the device
@@ -112,15 +116,23 @@ export const createRelay = (ownerId: OwnerId, host: RelayHost): Relay => {
    */
   const pending: Array<PendingRound> = []
 
-  /** First write key seen while this owner has connections. */
+  /** First write key seen while this room has connections. */
   let ownerWriteKey: string | null = null
+
+  /**
+   * The owner this room settled on, from its first round. Reaching a room
+   * takes the owner's secret (DESIGN.md §4b), so this is not a gate against an
+   * attacker — it is what turns an app pointing two owners at one room into a
+   * visible drop rather than silently mixed data.
+   */
+  let roomOwnerId: OwnerId | null = null
 
   /**
    * Shadows the global `console` on purpose: inside this file there is no
    * other one, and a stray global call would be a dependency this layer is
    * not allowed to have.
    */
-  const console = host.console.child(ownerId)
+  const console = host.console.child(roomId)
 
   const patch = (socket: RelaySocket, next: Partial<SocketState>) => {
     socket.setState({ ...socket.state(), ...next })
@@ -172,8 +184,8 @@ export const createRelay = (ownerId: OwnerId, host: RelayHost): Relay => {
     triedIds: ReadonlyArray<number> = []
   ) => {
     // The header is not parsed again here: `receive` has already validated it,
-    // and `parseProtocolHeader` copies the whole frame. `ownerId` is this
-    // relay's own, which is what that check made sure of.
+    // and `parseProtocolHeader` copies the whole frame. Where the owner is
+    // needed it is read straight out of the bytes instead.
     const bodyOffset = requestBodyOffset(message)
 
     const self = from.state()
@@ -189,7 +201,9 @@ export const createRelay = (ownerId: OwnerId, host: RelayHost): Relay => {
       // Either nobody is here, or nobody answered: same answer either way. The
       // device may be behind, and the next introduction by any peer repairs it,
       // because reconciliation is two-way.
-      from.send(responseWithoutBody(ownerId, ProtocolErrorCode.NoError))
+      from.send(
+        responseWithoutBody(readOwnerId(message), ProtocolErrorCode.NoError)
+      )
       console.debug(decision.exhausted ? "gave-up" : "alone", {
         socket: self.id,
         tried: triedIds.length,
@@ -300,8 +314,10 @@ export const createRelay = (ownerId: OwnerId, host: RelayHost): Relay => {
       return
     }
 
-    // One relay per owner, so a socket may not smuggle another owner through.
-    if (header.value.ownerId !== ownerId) {
+    // The first round settles whose room this is; everything after it has to
+    // agree, so a socket cannot smuggle a second owner through.
+    roomOwnerId ??= header.value.ownerId
+    if (header.value.ownerId !== roomOwnerId) {
       console.debug("drop", { socket: id, reason: "foreign-owner" })
       return
     }
@@ -339,7 +355,12 @@ export const createRelay = (ownerId: OwnerId, host: RelayHost): Relay => {
 
     if (keyRefused) {
       console.warn("drop", { socket: id, reason: "write-key" })
-      socket.send(responseWithoutBody(ownerId, ProtocolErrorCode.WriteKeyError))
+      socket.send(
+        responseWithoutBody(
+          header.value.ownerId,
+          ProtocolErrorCode.WriteKeyError
+        )
+      )
       return
     }
 

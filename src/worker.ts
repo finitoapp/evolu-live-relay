@@ -1,5 +1,4 @@
 import { Id } from "@evolu/common"
-import { OwnerId } from "@evolu/common/local-first"
 import { createRelayConsole } from "./log.ts"
 import {
   createRelay,
@@ -14,10 +13,11 @@ import {
  * evolu-live-relay as a Cloudflare Durable Object: the host adapter. The relay
  * itself is in relay.ts, shared with the local server. See DESIGN.md §4b.
  *
- * Connect to `wss://<host>/<roomId>?ownerId=<ownerId>`: the Worker routes the
- * path to one Durable Object per room, which is where that owner's devices
- * meet — and one object is one relay. The room id is opaque here; what it is
- * derived from is the app's business (DESIGN.md §4b). The object writes no
+ * Connect to `wss://<host>/<roomId>`: the Worker routes the path to one
+ * Durable Object per room, which is where that owner's devices meet — and one
+ * object is one relay. The room id is opaque here; what it is derived from is
+ * the app's business (DESIGN.md §4b), and the owner is never in the address —
+ * the relay reads it out of the rounds themselves. The object writes no
  * rows; the only storage API it touches is the alarm clock, which is how a
  * held round gets routed once a pipe goes quiet. Everything else lives in the
  * per-socket attachments, so it may hibernate between messages.
@@ -59,26 +59,16 @@ declare const WebSocketPair: new () => {
 }
 
 /**
- * The attachment is the only thing that survives hibernation, so it carries
- * both halves: the relay's own state, and whose room this is — the object is
- * named by the room, not by the owner, and after a wake there is nothing else
- * left to ask.
+ * The attachment is the socket's state, and the only thing that survives
+ * hibernation — so `state`/`setState` are literally the attachment codec.
  */
-interface Attachment {
-  readonly ownerId: OwnerId
-  readonly state: SocketState
-}
-
-const attachmentOf = (socket: CfWebSocket) =>
-  socket.deserializeAttachment() as Attachment
-
 const socketView = (socket: CfWebSocket): RelaySocket => ({
   send: (bytes) => {
     socket.send(bytes)
   },
-  state: () => attachmentOf(socket).state,
-  setState: (state) => {
-    socket.serializeAttachment({ ...attachmentOf(socket), state })
+  state: () => socket.deserializeAttachment() as SocketState,
+  setState: (next) => {
+    socket.serializeAttachment(next)
   },
 })
 
@@ -120,25 +110,14 @@ export class EvoluLiveRelay {
     }
   }
 
-  /** The owner this room settled on, from whichever socket is still here. */
-  #ownerId(): OwnerId | undefined {
-    for (const socket of this.#ctx.getWebSockets()) {
-      return attachmentOf(socket).ownerId
-    }
-    return undefined
-  }
-
-  /**
-   * Null only when no socket is left to say whose room this is — an alarm that
-   * outlived its sockets, which has nothing to do anyway.
-   */
+  /** Null when this object was not addressed by a valid room id. */
   #relayFor(): Relay | null {
     if (this.#relay !== null) return this.#relay
 
-    const ownerId = this.#ownerId()
-    if (ownerId === undefined) return null
+    const name = this.#ctx.id.name
+    if (name === undefined || !Id.is(name)) return null
 
-    this.#relay = createRelay(ownerId, this.#host)
+    this.#relay = createRelay(name, this.#host)
     return this.#relay
   }
 
@@ -147,26 +126,9 @@ export class EvoluLiveRelay {
       return upgradeRequired()
     }
 
-    const ownerId = new URL(request.url).searchParams.get("ownerId")
-    if (ownerId === null || !OwnerId.is(ownerId)) {
-      return connectHere(request)
-    }
-
-    // A room is addressed by a token only this owner's devices can derive, so
-    // a second owner arriving in one is either a 128-bit collision or someone
-    // who should not be here. Either way the room already has an owner.
-    const settled = this.#ownerId()
-    if (settled !== undefined && settled !== ownerId) {
-      console.warn("room-owner-mismatch", { room: this.#ctx.id.name ?? "" })
-      return new Response("This room belongs to another owner", { status: 409 })
-    }
-
     const pair = new WebSocketPair()
     this.#ctx.acceptWebSocket(pair[1])
-    pair[1].serializeAttachment({
-      ownerId,
-      state: initialSocketState(this.#nextId()),
-    } satisfies Attachment)
+    socketView(pair[1]).setState(initialSocketState(this.#nextId()))
 
     // `webSocket` is a Workers-only ResponseInit field.
     return new Response(null, {
@@ -195,13 +157,6 @@ export class EvoluLiveRelay {
   }
 }
 
-/** The host comes from the request, so the line can be pasted as it is. */
-const connectHere = (request: Request) =>
-  new Response(
-    `Connect to wss://${new URL(request.url).host}/<roomId>?ownerId=<ownerId>`,
-    { status: 400 }
-  )
-
 export default {
   fetch: (request: Request, env: Env): Response | Promise<Response> => {
     const url = new URL(request.url)
@@ -209,8 +164,11 @@ export default {
 
     // The room id is routing and nothing else: any Evolu Id will do, and what
     // this one is derived from is the app's business.
-    if (!Id.is(roomId) || !OwnerId.is(url.searchParams.get("ownerId") ?? "")) {
-      return connectHere(request)
+    if (!Id.is(roomId)) {
+      // The host comes from the request, so the line can be pasted as it is.
+      return new Response(`Connect to wss://${url.host}/<roomId>`, {
+        status: 400,
+      })
     }
 
     if (request.headers.get("upgrade") !== "websocket") {

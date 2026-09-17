@@ -90,18 +90,18 @@ bun run start --port 4000 --cert cert.pem --key key.pem
 
 ## Point a client at it
 
-A room id goes in the path and the owner id in the query string, so one
-Durable Object — or one routing table entry — belongs to exactly one owner:
+The whole address is a room id, and one room is one owner:
 
 ```
-wss://<host>/<roomId>?ownerId=<ownerId>
+wss://<host>/<roomId>
 ```
 
-`<ownerId>` is `evolu.appOwner.id` (or the id of whichever owner you sync), and
-`?ownerId=…` is exactly what Evolu's `createOwnerWebSocketTransport` appends.
-`<roomId>` is any Evolu `Id` — the relay treats it as opaque — but it should be
-derived from the owner's secret, so that only that owner's devices can find the
-room:
+The owner is not in the URL. Every message carries it in its header, so the
+relay reads it from the first round it is given — which keeps an owner id out
+of URLs, and therefore out of logs, proxies and devtools.
+
+`<roomId>` is any Evolu `Id`; the relay treats it as opaque. Derive it from the
+owner's secret, so that only that owner's devices can find the room:
 
 ```ts
 const secret = mnemonicToOwnerSecret(evolu.appOwner.mnemonic)
@@ -111,16 +111,21 @@ const roomId = idBytesToId(
   )
 )
 
-createOwnerWebSocketTransport({
-  url: `wss://<host>/${roomId}`,
-  ownerId: evolu.appOwner.id,
+const evolu = createEvolu(schema, {
+  appOwner,
+  transports: [{ type: "WebSocket", url: `wss://<host>/${roomId}` }],
 })
 ```
 
-That is the recipe Evolu uses for the owner id, under a different SLIP-21
-label. Knowing an owner id therefore does not reveal its room. See DESIGN.md §6
-for what that does and does not buy — it is an unguessable address, not
-authentication.
+That is the recipe Evolu uses for the owner id itself, under a different
+SLIP-21 label, so the room id is a sibling of the owner id rather than
+something derived from it: knowing an owner id does not reveal its room. See
+DESIGN.md §6 for what that does and does not buy — it is an unguessable
+address, not authentication.
+
+> Note `transports` takes the URL as it is. Do **not** wrap it in
+> `createOwnerWebSocketTransport`: that helper appends `?ownerId=`, which this
+> relay has no use for and which puts the owner id back in the URL.
 
 ## Deploy to Cloudflare
 

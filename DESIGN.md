@@ -129,13 +129,18 @@ day the format moves.
 
 ### 3.4 Routing table and lifecycle
 
-- Key the table by the **`roomId` in the URL**, settled before the upgrade, and
-  take the owner from that URL's `?ownerId=` alongside it (§4b). One socket
-  therefore carries exactly one owner: `Shared.ts` claims a set of owner ids per
-  transport, but Evolu opens a transport per owner, so an address carries one.
-  A second owner arriving in a settled room is refused at the upgrade.
-- Each message's header owner id is still checked against the room's, so a
-  socket cannot smuggle a second owner past the address.
+- Key the table by the **`roomId` in the URL**, settled before the upgrade
+  (§4b). The owner is not in the address at all: the **first round settles it**
+  and every round after it has to agree, which is the same shape as the write
+  key gate (§3.6).
+- One socket therefore carries one owner, but that follows from the address,
+  not from Evolu: `Shared.ts` shares one socket per transport and lets several
+  owner ids claim it (`createSharedResourceByKeyWithClaims`), so two owners
+  pointed at one URL would share a socket. A room per owner means a URL per
+  owner means a socket per owner. Keep it that way.
+- The settled-owner rule is not a gate against an attacker — reaching a room
+  takes the owner's secret. It is what turns an app that points two owners at
+  one room into a visible drop instead of silently mixed data.
 - A socket joins its owner on its first message, or on
   `SubscriptionFlags.Subscribe`; it leaves on `Unsubscribe` and on close.
 - Nothing survives a disconnect. Nothing survives a restart. Clients reconnect
@@ -252,14 +257,12 @@ address, not only in each header.
 The same relay, hosted. A Worker maps the URL path to one Durable Object per
 room and the object is where that room's devices meet.
 
-- **Address**: `wss://<host>/<roomId>?ownerId=<ownerId>`. The Worker validates
+- **Address**: `wss://<host>/<roomId>`, and nothing else. The Worker validates
   the path with Evolu's `Id.is` and calls `env.RELAY.idFromName(roomId)`, so
   every device of one owner lands in the same object and two owners never share
-  one. The owner comes from the query string, which is where Evolu's own
-  transport puts it, and the object keeps it in each socket's attachment; a
-  second owner arriving in a settled room is answered `409`. Each message's
-  header owner id is then checked against that one, so a socket cannot smuggle
-  a second owner through.
+  one. The owner is never in the address — every message carries it in its
+  header, so the object reads it from there (`readOwnerId`) and the first round
+  settles whose room it is.
 - **Why the room is not just the owner id**: an owner id identifies an owner to
   anyone who sees it, and Evolu's own docs say to share it only with a relay
   that must verify access (`Owner.ts:255`). A room id derived from the secret
@@ -280,8 +283,8 @@ room and the object is where that room's devices meet.
 - **Deploy**: `bun run deploy` (`wrangler deploy`).
   The class is registered as a SQLite-backed migration because those are the
   ones the free plan offers; it never writes to it.
-- **App side**: the room id goes in the URL the app stores, and Evolu's own
-  `createOwnerWebSocketTransport` appends the owner id to it:
+- **App side**: the room id is the whole URL the app stores, passed to
+  `transports` as it is:
 
   ```ts
   const roomId = idBytesToId(
@@ -289,11 +292,14 @@ room and the object is where that room's devices meet.
       createSlip21(secret, ["evolu-live-relay", "RoomId"]).slice(0, 16)
     )
   )
-  createOwnerWebSocketTransport({
-    url: `wss://<host>/${roomId}`,
-    ownerId: appOwner.id,
-  })
+  transports: [{ type: "WebSocket", url: `wss://<host>/${roomId}` }]
   ```
+
+  Not `createOwnerWebSocketTransport`: it appends `?ownerId=`
+  (`Owner.ts:485`), which this relay has no use for and which would put the
+  owner id back into URLs, logs and devtools. Evolu opens the socket at
+  `transport.url` verbatim (`Shared.ts:363`), so a plain literal is all it
+  takes.
 
   That is the recipe Evolu uses for the owner id itself, under a different
   SLIP-21 label, so the room id is a sibling of the owner id rather than

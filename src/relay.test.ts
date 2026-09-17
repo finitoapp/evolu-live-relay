@@ -2,6 +2,7 @@ import {
   type AppOwner,
   createAppOwner,
   createConsole,
+  createId,
   createOwnerSecret,
   createRandomBytes,
   Millis,
@@ -80,18 +81,21 @@ const createRequest = (
   return buffer.unwrap()
 }
 
+/** The relay treats it as opaque, so any Evolu Id does. */
+const testRoomId = createId({ randomBytes: createRandomBytes() })
+
 interface TestSocket extends RelaySocket {
   readonly sent: Array<Uint8Array>
   open: boolean
 }
 
-const createHarness = (owner: AppOwner) => {
+const createHarness = () => {
   let now = 1_000_000
   let wakeAt: number | null = null
   let nextId = 1
   const sockets: Array<TestSocket> = []
 
-  const relay = createRelay(owner.id, {
+  const relay = createRelay(testRoomId, {
     openSockets: () => sockets.filter((socket) => socket.open),
     wakeAt: (delayMs) => {
       wakeAt = delayMs === null ? null : now + delayMs
@@ -158,7 +162,7 @@ const expectInSync = (message: Uint8Array | undefined) => {
 
 test("a lone device is told it is in sync", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const alone = relay.connect()
 
   relay.send(alone, createRequest(owner))
@@ -169,7 +173,7 @@ test("a lone device is told it is in sync", () => {
 
 test("a peer is piped the round as a Response, body untouched", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const b = relay.connect()
 
@@ -191,7 +195,7 @@ test("a peer is piped the round as a Response, body untouched", () => {
 
 test("a socket that has connected but never synced is not a peer", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   // Connected, and silent: it has not introduced itself, so it cannot be
   // handed another device's round.
@@ -205,7 +209,7 @@ test("a socket that has connected but never synced is not a peer", () => {
 
 test("a refused write key never becomes a peer", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const impostor = relay.connect()
 
@@ -227,21 +231,25 @@ test("a refused write key never becomes a peer", () => {
   expectInSync(a.sent[1])
 })
 
-test("a round for another owner is dropped", () => {
+test("the first round settles the room's owner, and a second one is dropped", () => {
   const owner = createOwner()
   const stranger = createOwner()
-  const relay = createHarness(owner)
-  const socket = relay.connect()
+  const relay = createHarness()
+  const device = relay.connect()
+  const impostor = relay.connect()
 
-  relay.send(socket, createRequest(stranger))
+  // Nothing in the address says whose room this is, so the first round does.
+  relay.send(device, createRequest(owner))
+  expect(device.state().joined).toBe(true)
 
-  expect(socket.sent).toHaveLength(0)
-  expect(socket.state().joined).toBe(false)
+  relay.send(impostor, createRequest(stranger))
+  expect(impostor.sent).toHaveLength(0)
+  expect(impostor.state().joined).toBe(false)
 })
 
 test("a round with no ranges ends the pipe and is broadcast to the rest", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const b = relay.connect()
 
@@ -261,7 +269,7 @@ test("a round with no ranges ends the pipe and is broadcast to the rest", () => 
 
 test("an unsubscribing socket stops being a peer, and may rejoin", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const b = relay.connect()
 
@@ -285,7 +293,7 @@ test("an unsubscribing socket stops being a peer, and may rejoin", () => {
 
 test("a silent partner is retried, then the sender is told it is in sync", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const b = relay.connect()
 
@@ -303,7 +311,7 @@ test("a silent partner is retried, then the sender is told it is in sync", () =>
 
 test("a held round sweeps the peers one at a time", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const b = relay.connect()
 
@@ -331,7 +339,7 @@ test("a held round sweeps the peers one at a time", () => {
 
 test("a closing socket takes its held rounds and its partner's pipe with it", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const b = relay.connect()
 
@@ -352,7 +360,7 @@ test("a closing socket takes its held rounds and its partner's pipe with it", ()
 
 test("the relay goes idle once everyone has left", () => {
   const owner = createOwner()
-  const relay = createHarness(owner)
+  const relay = createHarness()
   const a = relay.connect()
   const b = relay.connect()
 

@@ -100,10 +100,11 @@ may hold only what genuinely differs between the two runtimes:
 | socket list | the room's array | `ctx.getWebSockets()` |
 | one relay per room | an entry in a `Map` | the object itself |
 
-Both hosts are addressed the same way — `/<roomId>?ownerId=<ownerId>` — so a
-socket belongs to exactly one room and one owner for its whole life, settled
-before the upgrade. The room id is opaque routing: the relay never derives it
-and `Id.is` is the whole of its validation. What it should be derived from, and
+Both hosts are addressed the same way — `/<roomId>` — so a socket belongs to
+exactly one room for its whole life, settled before the upgrade. The owner is
+never in the address: the relay learns it from the first round and every round
+after it has to agree. The room id is opaque routing: the relay never derives
+it and `Id.is` is the whole of its validation. What it should be derived from, and
 what that does and does not buy, is DESIGN.md §4b and §6 — an unguessable
 address, not authentication, so never write anything that treats a reachable
 room as a proven one.

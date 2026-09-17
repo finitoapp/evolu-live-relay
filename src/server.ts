@@ -1,5 +1,4 @@
 import { err, Id, ok, type Result, tryAsync } from "@evolu/common"
-import { OwnerId } from "@evolu/common/local-first"
 import { defineError } from "./error.ts"
 import { createRelayConsole } from "./log.ts"
 import {
@@ -21,10 +20,10 @@ import {
  * every other socket of that owner gets a Broadcast copy. A device connected
  * alone is answered "you are in sync" and its data is dropped.
  *
- * Connect to `ws://<host>/<roomId>?ownerId=<ownerId>`, the same address the
- * Worker takes. One process here holds every room, so this adapter keeps a
- * relay per room where a Durable Object is one; the room id is opaque to it
- * either way.
+ * Connect to `ws://<host>/<roomId>`, the same address the Worker takes. One
+ * process here holds every room, so this adapter keeps a relay per room where
+ * a Durable Object is one; the room id is opaque to it either way, and the
+ * owner is never in the address — the relay reads it out of the rounds.
  *
  * Run: bun run src/server.ts [--port 4000] [--cert file.pem [--key file.pem]]
  *
@@ -38,7 +37,6 @@ import {
 interface SocketData {
   readonly id: number
   readonly roomId: Id
-  readonly ownerId: OwnerId
   /** The relay owns the contents; this is only where they are kept. */
   state: SocketState
 }
@@ -76,8 +74,6 @@ declare const Bun: {
 
 interface HostedRelay {
   readonly relay: Relay
-  /** The owner this room settled on, so a second one can be turned away. */
-  readonly ownerId: OwnerId
   /** Sockets of this room, open or not; the relay filters. */
   readonly sockets: Array<Socket>
   readonly cancelWake: () => void
@@ -104,7 +100,7 @@ const socketView = (socket: Socket): RelaySocket => ({
   },
 })
 
-const hostedRelayFor = (roomId: Id, ownerId: OwnerId): HostedRelay => {
+const hostedRelayFor = (roomId: Id): HostedRelay => {
   const existing = relays.get(roomId)
   if (existing !== undefined) return existing
 
@@ -116,7 +112,7 @@ const hostedRelayFor = (roomId: Id, ownerId: OwnerId): HostedRelay => {
     timer = null
   }
 
-  const relay = createRelay(ownerId, {
+  const relay = createRelay(roomId, {
     openSockets: () => sockets.filter(isOpen).map(socketView),
     wakeAt: (delayMs) => {
       cancelWake()
@@ -130,7 +126,7 @@ const hostedRelayFor = (roomId: Id, ownerId: OwnerId): HostedRelay => {
     console,
   })
 
-  const created: HostedRelay = { relay, ownerId, sockets, cancelWake }
+  const created: HostedRelay = { relay, sockets, cancelWake }
   relays.set(roomId, created)
   return created
 }
@@ -281,9 +277,9 @@ const tls =
 let nextSocketId = 1
 
 /**
- * The room and the owner are settled before the upgrade, so a socket belongs
- * to exactly one of each for its whole life — the same shape a Durable Object
- * gets from being addressed by room.
+ * The room is settled before the upgrade, so a socket belongs to exactly one
+ * for its whole life — the same shape a Durable Object gets from being
+ * addressed by room.
  */
 const accept = (
   request: Request,
@@ -291,27 +287,13 @@ const accept = (
 ): Response | undefined => {
   const url = new URL(request.url)
   const roomId = url.pathname.replace(/^\/+|\/+$/g, "")
-  const ownerId = url.searchParams.get("ownerId") ?? ""
 
-  if (!Id.is(roomId) || !OwnerId.is(ownerId)) {
-    return new Response(
-      `Connect to ws://${url.host}/<roomId>?ownerId=<ownerId>`,
-      { status: 400 }
-    )
-  }
-
-  // A room is addressed by a token only this owner's devices can derive, so a
-  // second owner arriving in one has no business being there.
-  const hosted = relays.get(roomId)
-  if (hosted !== undefined && hosted.ownerId !== ownerId) {
-    console.warn("room-owner-mismatch", { room: roomId })
-    return new Response("This room belongs to another owner", { status: 409 })
+  if (!Id.is(roomId)) {
+    return new Response(`Connect to ws://${url.host}/<roomId>`, { status: 400 })
   }
 
   const id = nextSocketId++
-  return upgrade({
-    data: { id, roomId, ownerId, state: initialSocketState(id) },
-  })
+  return upgrade({ data: { id, roomId, state: initialSocketState(id) } })
     ? undefined
     : new Response("evolu-live-relay — WebSocket only", { status: 426 })
 }
@@ -330,8 +312,8 @@ const server = Bun.serve({
     idleTimeout: 30,
     sendPings: true,
     open: (socket) => {
-      const { roomId, ownerId } = socket.data
-      hostedRelayFor(roomId, ownerId).sockets.push(socket)
+      const { roomId } = socket.data
+      hostedRelayFor(roomId).sockets.push(socket)
       console.info("open", { socket: socket.data.id, room: roomId })
     },
     message: (socket, message) => {
