@@ -1,4 +1,4 @@
-import { err, Id, ok, type Result, tryAsync } from "@evolu/common"
+import { err, ok, type Result, tryAsync } from "@evolu/common"
 import { defineError } from "./error.ts"
 import { createRelayConsole } from "./log.ts"
 import {
@@ -8,6 +8,7 @@ import {
   type RelaySocket,
   type SocketState,
 } from "./relay.ts"
+import { parseRoomId, type RoomId } from "./room.ts"
 
 /**
  * evolu-live-relay, the local server: the host adapter. The relay itself is in
@@ -36,7 +37,7 @@ import {
 
 interface SocketData {
   readonly id: number
-  readonly roomId: Id
+  readonly roomId: RoomId
   /** The relay owns the contents; this is only where they are kept. */
   state: SocketState
 }
@@ -87,7 +88,7 @@ const console = createRelayConsole()
 
 const isOpen = (socket: Socket) => socket.readyState === 1
 
-const relays = new Map<Id, HostedRelay>()
+const relays = new Map<RoomId, HostedRelay>()
 
 /** One socket as its room's relay sees it. */
 const socketView = (socket: Socket): RelaySocket => ({
@@ -100,7 +101,7 @@ const socketView = (socket: Socket): RelaySocket => ({
   },
 })
 
-const hostedRelayFor = (roomId: Id): HostedRelay => {
+const hostedRelayFor = (roomId: RoomId): HostedRelay => {
   const existing = relays.get(roomId)
   if (existing !== undefined) return existing
 
@@ -135,7 +136,7 @@ const hostedRelayFor = (roomId: Id): HostedRelay => {
  * Nothing connected and nothing held: the room is forgotten, which is also
  * what ends the life of its write key.
  */
-const dropIfIdle = (roomId: Id) => {
+const dropIfIdle = (roomId: RoomId) => {
   const hosted = relays.get(roomId)
   if (hosted === undefined || !hosted.relay.isIdle()) return
 
@@ -286,13 +287,18 @@ const accept = (
   upgrade: (options: { readonly data: SocketData }) => boolean
 ): Response | undefined => {
   const url = new URL(request.url)
-  const roomId = url.pathname.replace(/^\/+|\/+$/g, "")
+  const room = parseRoomId(url.pathname.replace(/^\/+|\/+$/g, ""))
 
-  if (!Id.is(roomId)) {
-    return new Response(`Connect to ws://${url.host}/<roomId>`, { status: 400 })
+  if (!room.ok) {
+    console.warn("refused", { reason: room.error.reason })
+    return new Response(
+      `${room.error.reason}\n\nConnect to ws://${url.host}/<roomId>\n`,
+      { status: 400 }
+    )
   }
 
   const id = nextSocketId++
+  const roomId = room.value
   return upgrade({ data: { id, roomId, state: initialSocketState(id) } })
     ? undefined
     : new Response("evolu-live-relay — WebSocket only", { status: 426 })

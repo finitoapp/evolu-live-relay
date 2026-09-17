@@ -1,4 +1,3 @@
-import { Id } from "@evolu/common"
 import { createRelayConsole } from "./log.ts"
 import {
   createRelay,
@@ -8,6 +7,7 @@ import {
   type RelaySocket,
   type SocketState,
 } from "./relay.ts"
+import { parseRoomId } from "./room.ts"
 
 /**
  * evolu-live-relay as a Cloudflare Durable Object: the host adapter. The relay
@@ -115,9 +115,12 @@ export class EvoluLiveRelay {
     if (this.#relay !== null) return this.#relay
 
     const name = this.#ctx.id.name
-    if (name === undefined || !Id.is(name)) return null
+    if (name === undefined) return null
 
-    this.#relay = createRelay(name, this.#host)
+    const roomId = parseRoomId(name)
+    if (!roomId.ok) return null
+
+    this.#relay = createRelay(roomId.value, this.#host)
     return this.#relay
   }
 
@@ -162,13 +165,19 @@ export default {
     const url = new URL(request.url)
     const roomId = url.pathname.replace(/^\/+|\/+$/g, "")
 
-    // The room id is routing and nothing else: any Evolu Id will do, and what
-    // this one is derived from is the app's business.
-    if (!Id.is(roomId)) {
+    // The room id is routing and nothing else; what it is derived from is the
+    // app's business, so only its shape is checked.
+    const room = parseRoomId(roomId)
+    if (!room.ok) {
+      // A browser shows none of this — its WebSocket API exposes neither the
+      // status nor the body — so say it in the log as well, where it can be
+      // read with `wrangler tail`.
+      console.warn("refused", { reason: room.error.reason })
       // The host comes from the request, so the line can be pasted as it is.
-      return new Response(`Connect to wss://${url.host}/<roomId>`, {
-        status: 400,
-      })
+      return new Response(
+        `${room.error.reason}\n\nConnect to wss://${url.host}/<roomId>\n`,
+        { status: 400 }
+      )
     }
 
     if (request.headers.get("upgrade") !== "websocket") {

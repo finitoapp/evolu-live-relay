@@ -258,11 +258,20 @@ The same relay, hosted. A Worker maps the URL path to one Durable Object per
 room and the object is where that room's devices meet.
 
 - **Address**: `wss://<host>/<roomId>`, and nothing else. The Worker validates
-  the path with Evolu's `Id.is` and calls `env.RELAY.idFromName(roomId)`, so
+  the path with `parseRoomId` and calls `env.RELAY.idFromName(roomId)`, so
   every device of one owner lands in the same object and two owners never share
   one. The owner is never in the address — every message carries it in its
   header, so the object reads it from there (`readOwnerId`) and the first round
   settles whose room it is.
+- **What a room id may be**: one URL path segment of `[A-Za-z0-9_-]`, at most
+  64 characters — the Base64Url alphabet Evolu's own `Id` is written in, so the
+  derived id below fits with nothing to encode. Those are the only three things
+  the relay itself needs: one segment, nothing that would forge a log line, and
+  a bound, because the id becomes a Durable Object's name and the prefix of
+  every line that room writes. Everything else is the app's business, including
+  choosing something short and guessable; the relay cannot tell and does not
+  try. A refused address is answered `400` with the reason, and the reason is
+  logged too, because a browser's WebSocket API shows neither.
 - **Why the room is not just the owner id**: an owner id identifies an owner to
   anyone who sees it, and Evolu's own docs say to share it only with a relay
   that must verify access (`Owner.ts:255`). A room id derived from the secret
@@ -305,7 +314,7 @@ room and the object is where that room's devices meet.
   SLIP-21 label, so the room id is a sibling of the owner id rather than
   derived from it: every device reaches it from the mnemonic
   (`mnemonicToOwnerSecret`) and nobody without the mnemonic can. The relay
-  never derives it and does not care how it was made — any Evolu `Id` routes.
+  never derives it and does not care how it was made.
 
 ## 5. Verification
 

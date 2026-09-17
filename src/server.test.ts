@@ -370,11 +370,24 @@ test("a silent partner is retried, then the sender is told it is in sync", async
   sender.socket.close()
 }, 20_000)
 
-test("an address without a room is refused", async () => {
-  const response = await fetch(`http://localhost:${port}/`)
+test("a refused address says what is wrong with it", async () => {
+  const missing = await fetch(`http://localhost:${port}/`)
+  expect(missing.status).toBe(400)
+  expect(await missing.text()).toContain("the room id is missing")
 
-  expect(response.status).toBe(400)
-  expect(await response.text()).toContain("/<roomId>")
+  const malformed = await fetch(`http://localhost:${port}/not%20a%20room`)
+  expect(malformed.status).toBe(400)
+  const body = await malformed.text()
+  expect(body).toContain("may only contain letters, digits, - and _")
+  // And what a good address looks like, with this relay's own host in it.
+  expect(body).toContain(`ws://localhost:${port}/<roomId>`)
+})
+
+test("a short room id is allowed; guessability is the caller's business", async () => {
+  const response = await fetch(`http://localhost:${port}/abc`)
+
+  // 426, not 400: the address was taken, only the upgrade was missing.
+  expect(response.status).toBe(426)
 })
 
 test("a second owner's rounds are dropped once a room has settled", async () => {

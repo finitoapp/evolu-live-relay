@@ -1,10 +1,11 @@
-import type { Console, Id } from "@evolu/common"
+import type { Console } from "@evolu/common"
 import {
   MessageType,
   type OwnerId,
   ProtocolErrorCode,
   parseProtocolHeader,
 } from "@evolu/common/local-first"
+import type { RoomId } from "./room.ts"
 import {
   addPending,
   answerTimeoutMs,
@@ -108,7 +109,7 @@ export interface Relay {
   readonly isIdle: () => boolean
 }
 
-export const createRelay = (roomId: Id, host: RelayHost): Relay => {
+export const createRelay = (roomId: RoomId, host: RelayHost): Relay => {
   /**
    * Rounds waiting for a partner, or for a partner's answer. In memory on
    * purpose; a Durable Object may lose them to hibernation, and the device

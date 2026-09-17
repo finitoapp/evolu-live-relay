@@ -5,6 +5,7 @@ import {
   createId,
   createOwnerSecret,
   createRandomBytes,
+  getOrThrow,
   Millis,
 } from "@evolu/common"
 import {
@@ -27,6 +28,7 @@ import {
   type RelaySocket,
   type SocketState,
 } from "./relay.ts"
+import { parseRoomId } from "./room.ts"
 import { answerTimeoutMs, pipeIdleMs } from "./routing.ts"
 
 /**
@@ -81,8 +83,10 @@ const createRequest = (
   return buffer.unwrap()
 }
 
-/** The relay treats it as opaque, so any Evolu Id does. */
-const testRoomId = createId({ randomBytes: createRandomBytes() })
+/** The relay treats it as opaque, so anything of the right shape does. */
+const testRoomId = getOrThrow(
+  parseRoomId(createId({ randomBytes: createRandomBytes() }))
+)
 
 interface TestSocket extends RelaySocket {
   readonly sent: Array<Uint8Array>

@@ -104,7 +104,8 @@ Both hosts are addressed the same way — `/<roomId>` — so a socket belongs to
 exactly one room for its whole life, settled before the upgrade. The owner is
 never in the address: the relay learns it from the first round and every round
 after it has to agree. The room id is opaque routing: the relay never derives
-it and `Id.is` is the whole of its validation. What it should be derived from, and
+it, and `parseRoomId` in `src/room.ts` checks only its shape — one path
+segment, log-safe, bounded. What it should be derived from, and
 what that does and does not buy, is DESIGN.md §4b and §6 — an unguessable
 address, not authentication, so never write anything that treats a reachable
 room as a proven one.
@@ -112,8 +113,9 @@ room as a proven one.
 Other files:
 
 - `src/error.ts` — `defineError`, the typed-error factory the rule above uses.
-  `src/log.ts` — `createRelayConsole`, the console each adapter's Run is built
-  with. Neither belongs to a layer; everything may import them.
+  `src/log.ts` — `createRelayConsole`, the console each adapter is built with.
+  `src/room.ts` — `RoomId` and `parseRoomId`, the shape of an address. None of
+  the three belongs to a layer; everything may import them.
 - `wrangler.toml` — the Worker. The Durable Object class is `EvoluLiveRelay`
   and its name is pinned by the `v1` migration, so renaming it is a migration
   (`renamed_classes`), not a rename.

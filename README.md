@@ -100,8 +100,10 @@ The owner is not in the URL. Every message carries it in its header, so the
 relay reads it from the first round it is given — which keeps an owner id out
 of URLs, and therefore out of logs, proxies and devtools.
 
-`<roomId>` is any Evolu `Id`; the relay treats it as opaque. Derive it from the
-owner's secret, so that only that owner's devices can find the room:
+`<roomId>` is opaque to the relay: one path segment of letters, digits, `-` and
+`_`, at most 64 characters. Anything of that shape routes, so `/abc` works —
+but a room id's only security is that it cannot be guessed, so derive a real
+one from the owner's secret and let every device compute the same room:
 
 ```ts
 const secret = mnemonicToOwnerSecret(evolu.appOwner.mnemonic)
