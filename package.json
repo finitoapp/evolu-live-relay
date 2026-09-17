@@ -1,0 +1,37 @@
+{
+  "name": "evolu-live-relay",
+  "version": "0.1.0",
+  "description": "A relay for Evolu that stores nothing: it pairs the devices of one owner while they are online together and pipes their sync rounds at each other.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "evolu",
+    "local-first",
+    "crdt",
+    "sync",
+    "relay",
+    "websocket"
+  ],
+  "scripts": {
+    "start": "bun run src/server.ts",
+    "check": "bun run check:lint && bun run check:ts && bun run check:tests",
+    "check:lint": "biome check .",
+    "check:ts": "tsc -b",
+    "check:tests": "vitest run",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "deploy": "wrangler deploy",
+    "dev:worker": "wrangler dev"
+  },
+  "dependencies": {
+    "@evolu/common": "8.10.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/node": "26.5.1",
+    "typescript": "6.0.3",
+    "vitest": "5.0.1",
+    "wrangler": "4.133.0"
+  }
+}

@@ -1,0 +1,14 @@
+name = "evolu-live-relay"
+main = "src/worker.ts"
+compatibility_date = "2026-09-16"
+
+# One object per owner, addressed by the /<ownerId> path.
+[[durable_objects.bindings]]
+name = "RELAY"
+class_name = "EvoluLiveRelay"
+
+# SQLite-backed classes are the ones available on the free plan. The relay
+# never touches storage; this only picks the class flavour.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["EvoluLiveRelay"]
